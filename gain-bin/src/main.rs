@@ -1,48 +1,15 @@
+mod config;
 mod volume;
 
 use gain_lib::Slider;
-use log::{error, info, trace, warn};
+use log::{info, trace, warn};
 use serialport::{SerialPort, SerialPortType};
-use std::{
-    collections::HashMap,
-    fs,
-    io::{BufRead, BufReader},
+use std::io::{BufRead, BufReader};
+
+use crate::{
+    config::{LoadedConfig, VolumeTarget},
+    volume::{set_app_volume, set_current_app_volume, set_master_volume, set_unmapped_volume},
 };
-
-use crate::volume::{
-    set_app_volume, set_current_app_volume, set_master_volume, set_unmapped_volume,
-};
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct Config {
-    comm_port: Option<String>,
-    #[serde(default)]
-    slider: Vec<SliderMappings>,
-    volume_step: f64,
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-struct SliderMappings {
-    id: u8,
-    #[serde(default)]
-    target: VolumeTarget,
-}
-
-#[derive(serde::Deserialize, Debug, Clone)]
-#[serde(rename_all = "lowercase")]
-enum VolumeTarget {
-    Master,
-    #[serde(rename = "current")]
-    CurrentApp,
-    Unmapped,
-    Apps(Vec<String>),
-}
-
-impl Default for VolumeTarget {
-    fn default() -> Self {
-        VolumeTarget::Apps(vec![])
-    }
-}
 
 fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>, Box<dyn std::error::Error>> {
     match comm_port {
@@ -80,45 +47,11 @@ fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>, Box<dyn s
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     pretty_env_logger::init();
-
     volume::windows_init()?;
 
-    let filename = "gain.toml";
-    let contents = match fs::read_to_string(filename) {
-        Ok(c) => c,
-        Err(_) => {
-            error!(
-                "Config file '{}' not found. Please create it based on 'gain.example.toml'.",
-                filename
-            );
-            return Err(format!("Failed to read config file: {}", filename).into());
-        }
-    };
-    let config: Config = match toml::from_str(&contents) {
-        Ok(d) => d,
-        Err(e) => {
-            error!("Failed to parse config file '{}': {}", filename, e);
-            return Err(format!("Failed to parse config file: {}", e).into());
-        }
-    };
+    let mut config = LoadedConfig::new_from_file("gain.toml")?;
 
-    let port = get_port(&config.comm_port)?;
-
-    let mappings: HashMap<u8, SliderMappings> = config
-        .slider
-        .clone()
-        .into_iter()
-        .map(|s| (s.id, s))
-        .collect();
-
-    let mapped_apps: Vec<_> = mappings
-        .values()
-        .filter_map(|mapping| match &mapping.target {
-            VolumeTarget::Apps(apps) => Some(apps),
-            _ => None,
-        })
-        .flatten()
-        .collect();
+    let port = get_port(&config.config.comm_port)?;
 
     let mut reader = BufReader::new(port);
     let mut buffer = Vec::new();
@@ -130,13 +63,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match reader.read_until(0x00, &mut buffer) {
             Ok(bytes_read) if bytes_read > 0 => {
+                config.reload_if_needed("gain.toml")?;
                 if let Some(&0x00) = buffer.last() {
                     buffer.pop(); // Remove the null terminator
                 }
 
                 match postcard::from_bytes_cobs::<Slider>(&mut buffer) {
                     Ok(slider) => {
-                        manage_slider(slider, &config, &mappings, &mapped_apps);
+                        manage_slider(slider, &config);
                     }
                     Err(e) => {
                         warn!("Failed to deserialize slider data: {}", e);
@@ -152,22 +86,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn manage_slider(
-    slider: Slider,
-    config: &Config,
-    mappings: &HashMap<u8, SliderMappings>,
-    mapped_apps: &Vec<&String>,
-) {
-    let multiplier = 1.0 / config.volume_step;
+fn manage_slider(slider: Slider, config: &LoadedConfig) {
+    let multiplier = 1.0 / config.config.volume_step;
     let raw_val = slider.value as f64 / 1023.0;
     let adjusted_value = (raw_val * multiplier).round() / multiplier;
     let final_vol = adjusted_value.max(0.0).min(1.0);
 
-    match mappings.get(&slider.id) {
+    match config.mappings.get(&slider.id) {
         Some(mapping) => match &mapping.target {
             VolumeTarget::Master => set_master_volume(final_vol),
             VolumeTarget::CurrentApp => set_current_app_volume(final_vol),
-            VolumeTarget::Unmapped => set_unmapped_volume(final_vol, mapped_apps),
+            VolumeTarget::Unmapped => set_unmapped_volume(final_vol, &config.mapped_apps),
             VolumeTarget::Apps(apps) => {
                 for app in apps {
                     set_app_volume(app, final_vol);

@@ -106,8 +106,8 @@ pub fn set_app_volume(target_app_name: &str, volume: f64) {
     }
 }
 
-pub fn set_unmapped_volume(volume: f64, excluded_apps: &Vec<&String>) {
-    let excluded_lower: Vec<String> = excluded_apps.iter().map(|s| s.to_lowercase()).collect();
+pub fn set_unmapped_volume(volume: f64, mapped_apps: &Vec<String>) {
+    let excluded_lower: Vec<String> = mapped_apps.iter().map(|s| s.to_lowercase()).collect();
     unsafe {
         with_session_enumerator(|session_enum, count| {
             for i in 0..count {

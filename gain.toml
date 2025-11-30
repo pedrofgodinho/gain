@@ -3,4 +3,4 @@ volume_step = 0.01
 
 [[slider]]
 id = 0
-target = "unmapped"
+target = "master"
