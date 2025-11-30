@@ -106,6 +106,43 @@ pub fn set_app_volume(target_app_name: &str, volume: f64) {
     }
 }
 
+pub fn set_unmapped_volume(volume: f64, excluded_apps: &Vec<&String>) {
+    let excluded_lower: Vec<String> = excluded_apps.iter().map(|s| s.to_lowercase()).collect();
+    unsafe {
+        with_session_enumerator(|session_enum, count| {
+            for i in 0..count {
+                if let Ok(control) = session_enum.GetSession(i) {
+                    if let Ok(control2) = control.cast::<IAudioSessionControl2>() {
+                        if let Ok(pid) = control2.GetProcessId() {
+                            if let Some(name) = get_process_name(pid) {
+                                let name_lower = name.to_lowercase();
+
+                                // Check if this process name is in the excluded list
+                                let mut is_excluded = false;
+                                for excluded in &excluded_lower {
+                                    if name_lower.contains(excluded) {
+                                        is_excluded = true;
+                                        break;
+                                    }
+                                }
+
+                                // Only set volume if NOT excluded
+                                if !is_excluded {
+                                    if let Ok(simple_vol) = control.cast::<ISimpleAudioVolume>() {
+                                        let _ = simple_vol
+                                            .SetMasterVolume(volume as f32, std::ptr::null());
+                                        trace!("Set unmapped app {} volume to {}", name, volume);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
 unsafe fn with_session_enumerator<F>(mut callback: F)
 where
     F: FnMut(&windows::Win32::Media::Audio::IAudioSessionEnumerator, i32),

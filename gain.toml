@@ -3,6 +3,4 @@ volume_step = 0.01
 
 [[slider]]
 id = 0
-target = "master"
-# target = "current"
-# target = { apps = ["firefox.exe"] }
+target = "unmapped"

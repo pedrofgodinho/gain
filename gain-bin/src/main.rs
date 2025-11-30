@@ -9,7 +9,9 @@ use std::{
     io::{BufRead, BufReader},
 };
 
-use crate::volume::{set_app_volume, set_current_app_volume, set_master_volume};
+use crate::volume::{
+    set_app_volume, set_current_app_volume, set_master_volume, set_unmapped_volume,
+};
 
 #[derive(serde::Deserialize, Debug, Clone)]
 struct Config {
@@ -32,6 +34,7 @@ enum VolumeTarget {
     Master,
     #[serde(rename = "current")]
     CurrentApp,
+    Unmapped,
     Apps(Vec<String>),
 }
 
@@ -108,6 +111,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|s| (s.id, s))
         .collect();
 
+    let mapped_apps: Vec<_> = mappings
+        .values()
+        .filter_map(|mapping| match &mapping.target {
+            VolumeTarget::Apps(apps) => Some(apps),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+
     let mut reader = BufReader::new(port);
     let mut buffer = Vec::new();
 
@@ -124,7 +136,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match postcard::from_bytes_cobs::<Slider>(&mut buffer) {
                     Ok(slider) => {
-                        manage_slider(slider, &config, &mappings);
+                        manage_slider(slider, &config, &mappings, &mapped_apps);
                     }
                     Err(e) => {
                         warn!("Failed to deserialize slider data: {}", e);
@@ -140,7 +152,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn manage_slider(slider: Slider, config: &Config, mappings: &HashMap<u8, SliderMappings>) {
+fn manage_slider(
+    slider: Slider,
+    config: &Config,
+    mappings: &HashMap<u8, SliderMappings>,
+    mapped_apps: &Vec<&String>,
+) {
     let multiplier = 1.0 / config.volume_step;
     let raw_val = slider.value as f64 / 1023.0;
     let adjusted_value = (raw_val * multiplier).round() / multiplier;
@@ -150,6 +167,7 @@ fn manage_slider(slider: Slider, config: &Config, mappings: &HashMap<u8, SliderM
         Some(mapping) => match &mapping.target {
             VolumeTarget::Master => set_master_volume(final_vol),
             VolumeTarget::CurrentApp => set_current_app_volume(final_vol),
+            VolumeTarget::Unmapped => set_unmapped_volume(final_vol, mapped_apps),
             VolumeTarget::Apps(apps) => {
                 for app in apps {
                     set_app_volume(app, final_vol);
