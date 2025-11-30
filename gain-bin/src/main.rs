@@ -11,7 +11,7 @@ use std::{
 };
 
 use crate::{
-    config::{LoadedConfig, VolumeTarget},
+    config::{Connection, LoadedConfig, VolumeTarget},
     volume::{set_app_volume, set_current_app_volume, set_master_volume, set_unmapped_volume},
 };
 
@@ -29,13 +29,13 @@ fn main() -> Result<()> {
             warn!("Failed to reload config: {}", e);
         }
 
-        let port_name_result = resolve_port_name(&config.config.comm_port);
+        let port_name_result = resolve_port_name(&config.connection);
 
         match port_name_result {
             Ok(name) => {
                 info!("Connecting to {}...", name);
 
-                match serialport::new(&name, config.config.baud_rate)
+                match serialport::new(&name, config.connection.baud_rate)
                     .timeout(Duration::from_secs(30))
                     .open()
                 {
@@ -57,21 +57,62 @@ fn main() -> Result<()> {
 /// Resolves the serial port name to use. If a port name is provided in the configuration,
 /// it is used directly. Otherwise, the function scans for available USB serial ports
 /// and returns the first one found.
-fn resolve_port_name(configured_port: &Option<String>) -> Result<String> {
-    match configured_port {
+fn resolve_port_name(connection_config: &Connection) -> Result<String> {
+    match &connection_config.com_port {
         Some(name) => Ok(name.clone()),
         None => {
             info!("No port specified, scanning for USB devices...");
             let ports = serialport::available_ports()?;
 
-            ports
-                .into_iter()
-                .find(|p| matches!(p.port_type, SerialPortType::UsbPort(_)))
-                .map(|p| {
-                    info!("Found USB device on {}", p.port_name);
-                    p.port_name
-                })
-                .ok_or_else(|| anyhow!("No USB serial device found"))
+            ports.into_iter().filter(|p| match &p.port_type {
+                SerialPortType::UsbPort(info) => {
+                    let vid_ok = connection_config
+                        .vid_filter
+                        .map_or(true, |vid| info.vid == vid);
+                    let pid_ok = connection_config
+                        .pid_filter
+                        .map_or(true, |pid| info.pid == pid);
+                    let sn_ok =
+                        connection_config
+                            .serial_number_filter
+                            .as_ref()
+                            .map_or(true, |sn| {
+                                info.serial_number
+                                    .as_ref()
+                                    .map_or(false, |device_sn| device_sn == sn)
+                            });
+                    let mn_ok = connection_config
+                        .manufacturer_filter
+                        .as_ref()
+                        .map_or(true, |mn| {
+                            info.manufacturer
+                                .as_ref()
+                                .map_or(false, |device_mn| device_mn == mn)
+                        });
+                    let prod_ok = connection_config
+                        .product_filter
+                        .as_ref()
+                        .map_or(true, |pn| {
+                            info.product
+                                .as_ref()
+                                .map_or(false, |device_pn| device_pn == pn)
+                        });
+                    if vid_ok && pid_ok && sn_ok && mn_ok && prod_ok {
+                        info!(
+                            "Found USB device: VID=0x{:04X}, PID=0x{:04X}, SN={:?}, MN={:?}, PN={:?}",
+                            info.vid, info.pid, info.serial_number, info.manufacturer, info.product
+                        );
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            }).nth(0).map(|p| {
+                info!("Found USB device on {}", p.port_name);
+                p.port_name
+            })
+            .ok_or_else(|| anyhow!("No USB serial device found"))
         }
     }
 }
@@ -119,12 +160,18 @@ fn process_serial_stream(
 
 /// Manages the volume adjustment logic based on the received slider data and configuration.
 fn manage_slider(slider: Slider, config: &LoadedConfig) -> Result<()> {
-    let step = config.config.volume_step;
+    let step = config.general.volume_step;
     let raw_percent = slider.value as f64 / 1023.0;
 
     // Snap to nearest step (e.g., if step is 0.05, snaps to 0.00, 0.05, 0.10)
     let quantized = (raw_percent / step).round() * step;
     let final_vol = quantized.clamp(0.0, 1.0);
+
+    let final_vol = if config.general.invert_direction {
+        1.0 - final_vol
+    } else {
+        final_vol
+    };
 
     match config.mappings.get(&slider.id) {
         Some(mapping) => match &mapping.target {

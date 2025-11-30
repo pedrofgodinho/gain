@@ -5,25 +5,57 @@ use std::{collections::HashMap, fs, time::Instant};
 /// Configuration structure for the application, deserialized from a TOML file.
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct Config {
-    /// Optional communication port (e.g., COM3 or /dev/ttyUSB0). If None, auto-detection is used.
-    pub comm_port: Option<String>,
-    /// Baud rate for serial communication. Defaults to 57600 if not specified.
-    #[serde(default = "default_baud_rate")]
-    pub baud_rate: u32,
-    /// Mappings for sliders to volume targets.
     #[serde(default)]
+    /// Connection configuration.
+    pub connection: Connection,
+    #[serde(default)]
+    /// General settings for volume control.
+    pub general: General,
+    #[serde(default)]
+    /// Slider mappings to volume targets.
     pub slider: Vec<SliderMappings>,
+}
+
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct General {
     /// Volume adjustment step size (0.0 to 1.0) for each slider movement.
-    #[serde(default = "default_volume_step")]
     pub volume_step: f64,
+    /// Invert the direction of volume adjustment for sliders.
+    pub invert_direction: bool,
 }
 
-fn default_baud_rate() -> u32 {
-    57600
+impl Default for General {
+    fn default() -> Self {
+        General {
+            volume_step: 0.01,
+            invert_direction: false,
+        }
+    }
 }
 
-fn default_volume_step() -> f64 {
-    0.01
+#[derive(serde::Deserialize, Debug, Clone)]
+pub struct Connection {
+    pub com_port: Option<String>,
+    pub baud_rate: u32,
+    pub vid_filter: Option<u16>,
+    pub pid_filter: Option<u16>,
+    pub serial_number_filter: Option<String>,
+    pub manufacturer_filter: Option<String>,
+    pub product_filter: Option<String>,
+}
+
+impl Default for Connection {
+    fn default() -> Self {
+        Connection {
+            com_port: None,
+            baud_rate: 57600,
+            vid_filter: None,
+            pid_filter: None,
+            serial_number_filter: None,
+            manufacturer_filter: None,
+            product_filter: None,
+        }
+    }
 }
 
 /// Mapping of a slider to a specific volume target.
@@ -59,8 +91,10 @@ impl Default for VolumeTarget {
 
 /// Loaded configuration with additional runtime data.
 pub struct LoadedConfig {
-    /// The base configuration.
-    pub config: Config,
+    /// The general configuration data.
+    pub general: General,
+    /// The connection configuration data.
+    pub connection: Connection,
     /// Mappings of slider IDs to their respective configurations.
     pub mappings: HashMap<u8, SliderMappings>,
     /// List of applications that have specific volume mappings.
@@ -112,7 +146,8 @@ impl LoadedConfig {
             .collect();
 
         LoadedConfig {
-            config,
+            general: config.general,
+            connection: config.connection,
             mappings,
             mapped_apps,
             last_modified,

@@ -52,22 +52,33 @@ Gain looks for a configuration file in two locations (in order of priority):
 ### Configuration Options
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `comm_port` | String | First available port | The serial port to which the Arduino is connected. |
-| `baud_rate` | Integer | 57600 | The baud rate for serial communication. |
-| `volume_step` | Float | 0.01 | The granularity of volume changes. Values from the hardware mixer will be rounded to the nearest multiple of this value. |
-| `slider` | Table Array | N/A | An array of slider configurations. Each slider configuration specifies the ID and target for a slider. |
+| `connection.com_port` | String | N/A | The serial port to which the Arduino is connected. |
+| `connection.baud_rate` | Integer | 57600 | The baud rate for serial communication. |
+| `connection.vid_filter` | u16 | N/A | If specified, filters com devices by vendor ID. |
+| `connection.pid_filter` | u16 | N/A | If specified, filters com devices by product ID. |
+| `connection.serial_number_filter` | String | N/A | If specified, filters com devices by serial number. |
+| `connection.manufacturer_filter` | String | N/A | If specified, filters com devices by manufacturer name. |
+| `connection.product_filter` | String | N/A | If specified, filters com devices by product name. |
+| `general.volume_step` | Float | 0.01 | The granularity of volume changes. Values from the hardware mixer will be rounded to the nearest multiple of this value. |
+| `general.invert_direction` | Boolean | false | If true, inverts the slider direction (i.e., turning the potentiometer clockwise decreases volume). |
 | `slider.id` | Integer | N/A | The ID of the slider, starting from 0. |
 | `slider.target` | String or Table | N/A | The target controlled by this slider (`master`, `current`, `unmapped`, or a table specifying multiple applications). |
 
 ### Example Configuration File
 
 ```toml
-# If comm_port is not specified, the first port found will be used
-comm_port = "COM3"
+[connection]
+# If com_port is not specified, the first port that passes all filters will be used
+# com_port = "COM3"
 # If baud_rate is not specified, 57600 will be used
 baud_rate = 57600
+serial_number_filter = "my_serial_number"
+
+[general]
 # The values from the hardware mixer will be rounded to the nearest multiple of volume_step. If your potentiometers are very noisy, you may want to increase this value.
 volume_step = 0.01
+# If true, inverts the slider direction (i.e., turning the potentiometer clockwise decreases volume)
+invert_direction = false
 
 [[slider]]
 # The ID of the slider, starting from 0
