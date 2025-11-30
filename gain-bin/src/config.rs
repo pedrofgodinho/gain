@@ -1,6 +1,6 @@
-use std::{collections::HashMap, fs, time::Instant};
-
+use anyhow::Result;
 use log::info;
+use std::{collections::HashMap, fs, time::Instant};
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct Config {
@@ -42,7 +42,7 @@ pub struct LoadedConfig {
 }
 
 impl LoadedConfig {
-    pub fn new_from_file(filename: &str) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new_from_file(filename: &str) -> Result<Self> {
         let config_data = std::fs::read_to_string(filename)?;
         let config: Config = toml::from_str(&config_data)?;
         let last_modified = fs::metadata(filename)
@@ -101,7 +101,7 @@ impl LoadedConfig {
         }
     }
 
-    pub fn reload_if_needed(&mut self, filename: &str) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn reload_if_needed(&mut self, filename: &str) -> Result<()> {
         if self.should_reload(filename) {
             let config_data = fs::read_to_string(filename)?;
             let config: Config = toml::from_str(&config_data)?;

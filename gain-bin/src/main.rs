@@ -1,6 +1,7 @@
 mod config;
 mod volume;
 
+use anyhow::{Result, anyhow};
 use gain_lib::Slider;
 use log::{info, trace, warn};
 use serialport::{SerialPort, SerialPortType};
@@ -11,7 +12,7 @@ use crate::{
     volume::{set_app_volume, set_current_app_volume, set_master_volume, set_unmapped_volume},
 };
 
-fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>, Box<dyn std::error::Error>> {
+fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>> {
     match comm_port {
         Some(port_name) => {
             info!("Connecting to specified port: {}...", port_name);
@@ -32,7 +33,7 @@ fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>, Box<dyn s
                     }
                     _ => false,
                 })
-                .ok_or("No Arduino found! Is it plugged in?")?;
+                .ok_or(anyhow!("No Arduino found! Is it plugged in?"))?;
 
             info!("Connecting to {}...", arduino_port.port_name);
 
@@ -45,7 +46,7 @@ fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>, Box<dyn s
     }
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     pretty_env_logger::init();
     volume::windows_init()?;
 
@@ -63,14 +64,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         match reader.read_until(0x00, &mut buffer) {
             Ok(bytes_read) if bytes_read > 0 => {
-                config.reload_if_needed("gain.toml")?;
+                if let Err(e) = config.reload_if_needed("gain.toml") {
+                    warn!("Failed to reload config: {}", e);
+                }
                 if let Some(&0x00) = buffer.last() {
                     buffer.pop(); // Remove the null terminator
                 }
 
                 match postcard::from_bytes_cobs::<Slider>(&mut buffer) {
                     Ok(slider) => {
-                        manage_slider(slider, &config);
+                        if let Err(e) = manage_slider(slider, &config) {
+                            warn!("Failed to manage slider: {}", e);
+                        }
                     }
                     Err(e) => {
                         warn!("Failed to deserialize slider data: {}", e);
@@ -86,7 +91,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-fn manage_slider(slider: Slider, config: &LoadedConfig) {
+fn manage_slider(slider: Slider, config: &LoadedConfig) -> Result<()> {
     let multiplier = 1.0 / config.config.volume_step;
     let raw_val = slider.value as f64 / 1023.0;
     let adjusted_value = (raw_val * multiplier).round() / multiplier;
@@ -99,12 +104,16 @@ fn manage_slider(slider: Slider, config: &LoadedConfig) {
             VolumeTarget::Unmapped => set_unmapped_volume(final_vol, &config.mapped_apps),
             VolumeTarget::Apps(apps) => {
                 for app in apps {
-                    set_app_volume(app, final_vol);
+                    if let Err(e) = set_app_volume(app, final_vol) {
+                        warn!("Failed to set volume for app {}: {}", app, e);
+                    }
                 }
+                Ok(())
             }
         },
         None => {
             trace!("No mapping found for slider ID {}", slider.id);
+            Ok(())
         }
     }
 }

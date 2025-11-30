@@ -1,6 +1,6 @@
-use std::{ffi::OsString, os::windows::ffi::OsStringExt};
-
+use anyhow::{Result, anyhow};
 use log::{error, trace};
+use std::{ffi::OsString, os::windows::ffi::OsStringExt};
 use windows::{
     Win32::Foundation::{CloseHandle, MAX_PATH},
     Win32::Media::Audio::Endpoints::IAudioEndpointVolume,
@@ -15,17 +15,17 @@ use windows::{
     core::{Interface, Result as WindowsResult},
 };
 
-pub fn windows_init() -> Result<(), Box<dyn std::error::Error>> {
+pub fn windows_init() -> Result<()> {
     unsafe {
         if let Err(e) = CoInitializeEx(None, COINIT_MULTITHREADED).ok() {
             error!("Failed to initialize COM: {}", e);
-            return Err(Box::new(e));
+            return Err(e.into());
         }
     }
     Ok(())
 }
 
-pub fn set_master_volume(volume: f64) {
+pub fn set_master_volume(volume: f64) -> Result<()> {
     unsafe {
         let enumerator: WindowsResult<IMMDeviceEnumerator> =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
@@ -36,135 +36,151 @@ pub fn set_master_volume(volume: f64) {
                     device.Activate(CLSCTX_ALL, None);
 
                 if let Ok(endpoint_vol) = endpoint_vol {
-                    let _ =
-                        endpoint_vol.SetMasterVolumeLevelScalar(volume as f32, std::ptr::null());
+                    endpoint_vol.SetMute(volume <= 0.0, std::ptr::null())?;
+                    endpoint_vol.SetMasterVolumeLevelScalar(volume as f32, std::ptr::null())?;
                     trace!("Set master volume to {}", volume);
                 }
             }
         }
+        Ok(())
     }
 }
 
-pub fn set_current_app_volume(volume: f64) {
+pub fn set_current_app_volume(volume: f64) -> Result<()> {
     unsafe {
         let hwnd = GetForegroundWindow();
         if hwnd.0.is_null() {
-            return;
+            return Ok(());
         }
 
         let mut pid: u32 = 0;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
 
         if pid == 0 {
-            return;
+            return Ok(());
         }
 
         with_session_enumerator(|session_enum, count| {
             for i in 0..count {
-                if let Ok(control) = session_enum.GetSession(i) {
-                    if let Ok(control2) = control.cast::<IAudioSessionControl2>() {
-                        if let Ok(session_pid) = control2.GetProcessId() {
-                            if session_pid == pid {
-                                // Match found! Set volume.
-                                if let Ok(simple_vol) = control.cast::<ISimpleAudioVolume>() {
-                                    let _ =
-                                        simple_vol.SetMasterVolume(volume as f32, std::ptr::null());
-                                    trace!("Set focused app (PID {}) volume to {}", pid, volume);
-                                }
-                            }
-                        }
+                // We define a fallible scope for this single iteration
+                let process_session = || -> Result<()> {
+                    // ? will jump to the end of process_session on error
+                    let control = session_enum.GetSession(i)?;
+                    let control2 = control.cast::<IAudioSessionControl2>()?;
+                    let session_pid = control2.GetProcessId()?;
+
+                    if session_pid == pid {
+                        let simple_vol = control.cast::<ISimpleAudioVolume>()?;
+                        set_volume(simple_vol, volume)?;
+                        trace!("Set focused app (PID {}) volume to {}", pid, volume);
                     }
-                }
+                    Ok(())
+                };
+
+                // Execute the closure. If it fails (Err), we ignore it and continue
+                // to the next loop iteration (effectively skipping invalid sessions).
+                let _ = process_session();
             }
-        });
+            Ok(())
+        })?;
+        Ok(())
     }
 }
 
-pub fn set_app_volume(target_app_name: &str, volume: f64) {
+pub fn set_app_volume(target_app_name: &str, volume: f64) -> Result<()> {
     let target_lower = target_app_name.to_lowercase();
 
     unsafe {
         with_session_enumerator(|session_enum, count| {
             for i in 0..count {
-                if let Ok(control) = session_enum.GetSession(i) {
-                    if let Ok(control2) = control.cast::<IAudioSessionControl2>() {
-                        if let Ok(pid) = control2.GetProcessId() {
-                            if let Some(name) = get_process_name(pid) {
-                                if name.to_lowercase().contains(&target_lower) {
-                                    if let Ok(simple_vol) = control.cast::<ISimpleAudioVolume>() {
-                                        let _ = simple_vol
-                                            .SetMasterVolume(volume as f32, std::ptr::null());
-                                        trace!("Set {} volume to {}", name, volume);
-                                    }
-                                }
-                            }
-                        }
+                let process_session = || -> Result<()> {
+                    let control = session_enum.GetSession(i)?;
+                    let control2 = control.cast::<IAudioSessionControl2>()?;
+                    let pid = control2.GetProcessId()?;
+
+                    // Convert Option to Result so we can use ? to bail if name is missing
+                    let name =
+                        get_process_name(pid).ok_or_else(|| anyhow!("Process name not found"))?;
+
+                    if name.to_lowercase().contains(&target_lower) {
+                        let simple_vol = control.cast::<ISimpleAudioVolume>()?;
+                        set_volume(simple_vol, volume)?;
+                        trace!("Set {} volume to {}", name, volume);
                     }
-                }
+                    Ok(())
+                };
+
+                // Run for this session, ignore errors, move to next
+                let _ = process_session();
             }
-        });
+            Ok(())
+        })?;
+        Ok(())
     }
 }
 
-pub fn set_unmapped_volume(volume: f64, mapped_apps: &Vec<String>) {
+pub fn set_unmapped_volume(volume: f64, mapped_apps: &Vec<String>) -> Result<()> {
     let excluded_lower: Vec<String> = mapped_apps.iter().map(|s| s.to_lowercase()).collect();
+
     unsafe {
         with_session_enumerator(|session_enum, count| {
             for i in 0..count {
-                if let Ok(control) = session_enum.GetSession(i) {
-                    if let Ok(control2) = control.cast::<IAudioSessionControl2>() {
-                        if let Ok(pid) = control2.GetProcessId() {
-                            if let Some(name) = get_process_name(pid) {
-                                let name_lower = name.to_lowercase();
+                let process_session = || -> Result<()> {
+                    let control = session_enum.GetSession(i)?;
+                    let control2 = control.cast::<IAudioSessionControl2>()?;
+                    let pid = control2.GetProcessId()?;
 
-                                // Check if this process name is in the excluded list
-                                let mut is_excluded = false;
-                                for excluded in &excluded_lower {
-                                    if name_lower.contains(excluded) {
-                                        is_excluded = true;
-                                        break;
-                                    }
-                                }
+                    let name =
+                        get_process_name(pid).ok_or_else(|| anyhow!("Process name not found"))?;
 
-                                // Only set volume if NOT excluded
-                                if !is_excluded {
-                                    if let Ok(simple_vol) = control.cast::<ISimpleAudioVolume>() {
-                                        let _ = simple_vol
-                                            .SetMasterVolume(volume as f32, std::ptr::null());
-                                        trace!("Set unmapped app {} volume to {}", name, volume);
-                                    }
-                                }
-                            }
-                        }
+                    let name_lower = name.to_lowercase();
+
+                    // Logic check: Is this excluded?
+                    let is_excluded = excluded_lower.iter().any(|ex| name_lower.contains(ex));
+
+                    if !is_excluded {
+                        let simple_vol = control.cast::<ISimpleAudioVolume>()?;
+                        set_volume(simple_vol, volume)?;
+                        trace!("Set unmapped app {} volume to {}", name, volume);
                     }
-                }
+                    Ok(())
+                };
+
+                let _ = process_session();
             }
-        });
+            Ok(())
+        })?;
+        Ok(())
     }
 }
 
-unsafe fn with_session_enumerator<F>(mut callback: F)
+unsafe fn set_volume(sav: ISimpleAudioVolume, volume: f64) -> Result<()> {
+    let volume = volume.clamp(0.0, 1.0);
+    unsafe { sav.SetMute(volume <= 0.0, std::ptr::null())? }
+    unsafe { sav.SetMasterVolume(volume as f32, std::ptr::null())? }
+    Ok(())
+}
+
+unsafe fn with_session_enumerator<F>(mut callback: F) -> Result<()>
 where
-    F: FnMut(&windows::Win32::Media::Audio::IAudioSessionEnumerator, i32),
+    F: FnMut(&windows::Win32::Media::Audio::IAudioSessionEnumerator, i32) -> Result<()>,
 {
     unsafe {
-        let enumerator: WindowsResult<IMMDeviceEnumerator> =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
+        // Use ? to bubble up setup errors immediately
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
 
-        if let Ok(enumerator) = enumerator {
-            if let Ok(device) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
-                let manager: WindowsResult<IAudioSessionManager2> =
-                    device.Activate(CLSCTX_ALL, None);
+        let device = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)?;
 
-                if let Ok(manager) = manager {
-                    if let Ok(session_enum) = manager.GetSessionEnumerator() {
-                        if let Ok(count) = session_enum.GetCount() {
-                            callback(&session_enum, count);
-                        }
-                    }
-                }
-            }
-        }
+        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None)?;
+
+        let session_enum = manager.GetSessionEnumerator()?;
+
+        let count = session_enum.GetCount()?;
+
+        callback(&session_enum, count)?;
+
+        Ok(())
     }
 }
 

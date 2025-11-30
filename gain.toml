@@ -1,6 +1,9 @@
-# comm_port = "COM3"
+comm_port = "COM3"
 volume_step = 0.01
 
 [[slider]]
 id = 0
-target = "master"
+# target = { apps = ["firefox.exe", "steam.exe"] }
+# target = "master"
+# target = "current"
+target = "unmapped"
