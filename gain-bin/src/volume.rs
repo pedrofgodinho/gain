@@ -62,9 +62,7 @@ pub fn set_current_app_volume(volume: f64) -> Result<()> {
 
         with_session_enumerator(|session_enum, count| {
             for i in 0..count {
-                // We define a fallible scope for this single iteration
                 let process_session = || -> Result<()> {
-                    // ? will jump to the end of process_session on error
                     let control = session_enum.GetSession(i)?;
                     let control2 = control.cast::<IAudioSessionControl2>()?;
                     let session_pid = control2.GetProcessId()?;
@@ -77,8 +75,6 @@ pub fn set_current_app_volume(volume: f64) -> Result<()> {
                     Ok(())
                 };
 
-                // Execute the closure. If it fails (Err), we ignore it and continue
-                // to the next loop iteration (effectively skipping invalid sessions).
                 let _ = process_session();
             }
             Ok(())
@@ -98,7 +94,6 @@ pub fn set_app_volume(target_app_name: &str, volume: f64) -> Result<()> {
                     let control2 = control.cast::<IAudioSessionControl2>()?;
                     let pid = control2.GetProcessId()?;
 
-                    // Convert Option to Result so we can use ? to bail if name is missing
                     let name =
                         get_process_name(pid).ok_or_else(|| anyhow!("Process name not found"))?;
 
@@ -110,7 +105,6 @@ pub fn set_app_volume(target_app_name: &str, volume: f64) -> Result<()> {
                     Ok(())
                 };
 
-                // Run for this session, ignore errors, move to next
                 let _ = process_session();
             }
             Ok(())
@@ -135,7 +129,6 @@ pub fn set_unmapped_volume(volume: f64, mapped_apps: &Vec<String>) -> Result<()>
 
                     let name_lower = name.to_lowercase();
 
-                    // Logic check: Is this excluded?
                     let is_excluded = excluded_lower.iter().any(|ex| name_lower.contains(ex));
 
                     if !is_excluded {
@@ -166,7 +159,6 @@ where
     F: FnMut(&windows::Win32::Media::Audio::IAudioSessionEnumerator, i32) -> Result<()>,
 {
     unsafe {
-        // Use ? to bubble up setup errors immediately
         let enumerator: IMMDeviceEnumerator =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)?;
 

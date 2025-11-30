@@ -6,4 +6,3 @@ volume_step = 0.01
 id = 0
 # target = { apps = ["firefox.exe", "steam.exe"] }
 target = "master"
-# target = "current"
