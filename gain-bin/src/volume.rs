@@ -32,16 +32,16 @@ pub fn set_master_volume(volume: f64) -> Result<()> {
         let enumerator: WindowsResult<IMMDeviceEnumerator> =
             CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL);
 
-        if let Ok(enumerator) = enumerator {
-            if let Ok(device) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
-                let endpoint_vol: WindowsResult<IAudioEndpointVolume> =
-                    device.Activate(CLSCTX_ALL, None);
+        if let Ok(enumerator) = enumerator
+            && let Ok(device) = enumerator.GetDefaultAudioEndpoint(eRender, eConsole)
+        {
+            let endpoint_vol: WindowsResult<IAudioEndpointVolume> =
+                device.Activate(CLSCTX_ALL, None);
 
-                if let Ok(endpoint_vol) = endpoint_vol {
-                    endpoint_vol.SetMute(volume <= 0.0, std::ptr::null())?;
-                    endpoint_vol.SetMasterVolumeLevelScalar(volume as f32, std::ptr::null())?;
-                    trace!("Set master volume to {}", volume);
-                }
+            if let Ok(endpoint_vol) = endpoint_vol {
+                endpoint_vol.SetMute(volume <= 0.0, std::ptr::null())?;
+                endpoint_vol.SetMasterVolumeLevelScalar(volume as f32, std::ptr::null())?;
+                trace!("Set master volume to {}", volume);
             }
         }
         Ok(())
@@ -118,7 +118,7 @@ pub fn set_app_volume(target_app_name: &str, volume: f64) -> Result<()> {
 }
 
 /// Sets the volume for all applications not in the mapped_apps list to the specified level (0.0 to 1.0).
-pub fn set_unmapped_volume(volume: f64, mapped_apps: &Vec<String>) -> Result<()> {
+pub fn set_unmapped_volume(volume: f64, mapped_apps: &[String]) -> Result<()> {
     let excluded_lower: Vec<String> = mapped_apps.iter().map(|s| s.to_lowercase()).collect();
 
     unsafe {
