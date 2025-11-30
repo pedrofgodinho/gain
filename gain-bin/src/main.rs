@@ -12,11 +12,11 @@ use crate::{
     volume::{set_app_volume, set_current_app_volume, set_master_volume, set_unmapped_volume},
 };
 
-fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>> {
+fn get_port(comm_port: &Option<String>, baud_rate: u32) -> Result<Box<dyn SerialPort>> {
     match comm_port {
         Some(port_name) => {
             info!("Connecting to specified port: {}...", port_name);
-            let port = serialport::new(port_name, 57600)
+            let port = serialport::new(port_name, baud_rate)
                 .timeout(std::time::Duration::from_millis(30_000))
                 .open()?;
             Ok(port)
@@ -37,7 +37,7 @@ fn get_port(comm_port: &Option<String>) -> Result<Box<dyn SerialPort>> {
 
             info!("Connecting to {}...", arduino_port.port_name);
 
-            let port = serialport::new(&arduino_port.port_name, 57600)
+            let port = serialport::new(&arduino_port.port_name, baud_rate)
                 .timeout(std::time::Duration::from_millis(30_000))
                 .open()?;
 
@@ -52,42 +52,56 @@ fn main() -> Result<()> {
 
     let mut config = LoadedConfig::new_from_file("gain.toml")?;
 
-    let port = get_port(&config.config.comm_port)?;
-
-    let mut reader = BufReader::new(port);
-    let mut buffer = Vec::new();
-
-    info!("Listening for slider data...");
-
     loop {
-        buffer.clear();
+        if let Err(e) = config.reload_if_needed("gain.toml") {
+            warn!("Failed to reload config: {}", e);
+        }
+        match get_port(&config.config.comm_port, config.config.baud_rate) {
+            Ok(port) => {
+                let mut reader = BufReader::new(port);
+                let mut buffer = Vec::new();
 
-        match reader.read_until(0x00, &mut buffer) {
-            Ok(bytes_read) if bytes_read > 0 => {
-                if let Err(e) = config.reload_if_needed("gain.toml") {
-                    warn!("Failed to reload config: {}", e);
-                }
-                if let Some(&0x00) = buffer.last() {
-                    buffer.pop(); // Remove the null terminator
-                }
+                info!("Listening for slider data...");
 
-                match postcard::from_bytes_cobs::<Slider>(&mut buffer) {
-                    Ok(slider) => {
-                        if let Err(e) = manage_slider(slider, &config) {
-                            warn!("Failed to manage slider: {}", e);
+                loop {
+                    buffer.clear();
+
+                    match reader.read_until(0x00, &mut buffer) {
+                        Ok(bytes_read) if bytes_read > 0 => {
+                            if let Err(e) = config.reload_if_needed("gain.toml") {
+                                warn!("Failed to reload config: {}", e);
+                            }
+                            if let Some(&0x00) = buffer.last() {
+                                buffer.pop(); // Remove the null terminator
+                            }
+
+                            match postcard::from_bytes_cobs::<Slider>(&mut buffer) {
+                                Ok(slider) => {
+                                    if let Err(e) = manage_slider(slider, &config) {
+                                        warn!("Failed to manage slider: {}", e);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("Failed to deserialize slider data: {}", e);
+                                }
+                            }
+                        }
+                        Ok(_) => continue, // No data read
+                        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
+                        Err(e) => {
+                            info!("Error reading from serial port: {}", e);
+                            break;
                         }
                     }
-                    Err(e) => {
-                        warn!("Failed to deserialize slider data: {}", e);
-                    }
                 }
             }
-            Ok(_) => continue, // No data read
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
             Err(e) => {
-                info!("Error reading from serial port: {}", e);
+                warn!("Failed to connect to serial port: {}", e);
             }
         }
+
+        // sleep before attempting to reconnect
+        std::thread::sleep(std::time::Duration::from_secs(5));
     }
 }
 

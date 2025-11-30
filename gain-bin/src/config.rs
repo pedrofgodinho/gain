@@ -5,9 +5,15 @@ use std::{collections::HashMap, fs, time::Instant};
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct Config {
     pub comm_port: Option<String>,
+    #[serde(default = "default_baud_rate")]
+    pub baud_rate: u32,
     #[serde(default)]
     pub slider: Vec<SliderMappings>,
     pub volume_step: f64,
+}
+
+fn default_baud_rate() -> u32 {
+    57600
 }
 
 #[derive(serde::Deserialize, Debug, Clone)]
