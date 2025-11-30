@@ -23,8 +23,26 @@ cargo build --release
 ```
 
 ### Arduino Firmware
-TODO: Instructions for building and uploading the Arduino firmware.
+**Prerequisites**:
+- [Rust](https://www.rust-lang.org/tools/install) (for building from source)
+- [avrdude](https://github.com/avrdudes/avrdude) (for flashing the firmware to the Arduino)
+- [avr-gcc](https://gcc.gnu.org/wiki/avr-gcc) (for compiling the firmware)
+- [ravedude](https://crates.io/crates/ravedude) (Rust wrapper for avrdude)
 
+You can install the dependencies on Windows using [Scoop](https://scoop.sh/) and `cargo install`:
+
+```powershell
+scoop install avr-gcc
+scoop install avrdude
+cargo install ravedude
+```
+
+**Build & Flash**:
+Navigate to the `gain-arduino` directory and run:
+
+```bash
+cargo run --release
+```
 
 ## ⚙️ Configuration
 Gain looks for a configuration file in two locations (in order of priority):
