@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+members = [
+    "gain-bin",
+    "gain-lib",
+]
+exclude = [
+    "gain-arduino"
+]
