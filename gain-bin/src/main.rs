@@ -19,10 +19,13 @@ fn main() -> Result<()> {
     pretty_env_logger::init();
     volume::windows_init()?;
 
-    let mut config = LoadedConfig::new_from_file("gain.toml")?;
+    let config_path = std::env::args().nth(1).unwrap_or("gain.toml".into());
+    info!("Using config file: {}", config_path);
+
+    let mut config = LoadedConfig::new_from_file(&config_path)?;
 
     loop {
-        if let Err(e) = config.reload_if_needed("gain.toml") {
+        if let Err(e) = config.reload_if_needed(&config_path) {
             warn!("Failed to reload config: {}", e);
         }
 
@@ -37,7 +40,7 @@ fn main() -> Result<()> {
                     .open()
                 {
                     Ok(port) => {
-                        if let Err(e) = process_serial_stream(port, &mut config) {
+                        if let Err(e) = process_serial_stream(port, &mut config, &config_path) {
                             error!("Serial connection lost: {}", e);
                         }
                     }
@@ -51,6 +54,9 @@ fn main() -> Result<()> {
     }
 }
 
+/// Resolves the serial port name to use. If a port name is provided in the configuration,
+/// it is used directly. Otherwise, the function scans for available USB serial ports
+/// and returns the first one found.
 fn resolve_port_name(configured_port: &Option<String>) -> Result<String> {
     match configured_port {
         Some(name) => Ok(name.clone()),
@@ -70,7 +76,13 @@ fn resolve_port_name(configured_port: &Option<String>) -> Result<String> {
     }
 }
 
-fn process_serial_stream(port: Box<dyn SerialPort>, config: &mut LoadedConfig) -> Result<()> {
+/// Processes incoming data from the serial port.
+/// Loops indefinitely, reading slider data, deserializing it.
+fn process_serial_stream(
+    port: Box<dyn SerialPort>,
+    config: &mut LoadedConfig,
+    config_path: &str,
+) -> Result<()> {
     let mut reader = BufReader::new(port);
     let mut buffer = Vec::new();
 
@@ -81,7 +93,7 @@ fn process_serial_stream(port: Box<dyn SerialPort>, config: &mut LoadedConfig) -
 
         match reader.read_until(0x00, &mut buffer) {
             Ok(bytes_read) if bytes_read > 0 => {
-                if let Err(e) = config.reload_if_needed("gain.toml") {
+                if let Err(e) = config.reload_if_needed(config_path) {
                     warn!("Config reload failed: {}", e);
                 }
 
@@ -105,6 +117,7 @@ fn process_serial_stream(port: Box<dyn SerialPort>, config: &mut LoadedConfig) -
     }
 }
 
+/// Manages the volume adjustment logic based on the received slider data and configuration.
 fn manage_slider(slider: Slider, config: &LoadedConfig) -> Result<()> {
     let step = config.config.volume_step;
     let raw_percent = slider.value as f64 / 1023.0;

@@ -15,6 +15,7 @@ use windows::{
     core::{Interface, Result as WindowsResult},
 };
 
+/// Initializes the COM library for use by the calling thread.
 pub fn windows_init() -> Result<()> {
     unsafe {
         if let Err(e) = CoInitializeEx(None, COINIT_MULTITHREADED).ok() {
@@ -25,6 +26,7 @@ pub fn windows_init() -> Result<()> {
     Ok(())
 }
 
+/// Sets the master system volume to the specified level (0.0 to 1.0).
 pub fn set_master_volume(volume: f64) -> Result<()> {
     unsafe {
         let enumerator: WindowsResult<IMMDeviceEnumerator> =
@@ -46,6 +48,7 @@ pub fn set_master_volume(volume: f64) -> Result<()> {
     }
 }
 
+/// Sets the volume of the currently focused application to the specified level (0.0 to 1.0).
 pub fn set_current_app_volume(volume: f64) -> Result<()> {
     unsafe {
         let hwnd = GetForegroundWindow();
@@ -83,6 +86,7 @@ pub fn set_current_app_volume(volume: f64) -> Result<()> {
     }
 }
 
+/// Sets the volume of a specific application (by name) to the specified level (0.0 to 1.0).
 pub fn set_app_volume(target_app_name: &str, volume: f64) -> Result<()> {
     let target_lower = target_app_name.to_lowercase();
 
@@ -113,6 +117,7 @@ pub fn set_app_volume(target_app_name: &str, volume: f64) -> Result<()> {
     }
 }
 
+/// Sets the volume for all applications not in the mapped_apps list to the specified level (0.0 to 1.0).
 pub fn set_unmapped_volume(volume: f64, mapped_apps: &Vec<String>) -> Result<()> {
     let excluded_lower: Vec<String> = mapped_apps.iter().map(|s| s.to_lowercase()).collect();
 
